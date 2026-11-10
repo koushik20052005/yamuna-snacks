@@ -53,6 +53,7 @@ canvas{max-width:100%}
 <section class="card">
 <h2>Dashboard</h2>
 <div class="kpis" id="kpis"></div>
+<p id="noDataMsg" class="hidden" style="margin-top:12px;font-weight:700;color:#8a2f14">No sales yet — add your first order below and the charts will fill in here.</p>
 <div class="row" style="margin-top:14px">
 <div><h3>Daily Sales (last 14 days)</h3><canvas id="dailyChart"></canvas></div>
 <div><h3>Weekly Sales</h3><canvas id="weeklyChart"></canvas></div>
@@ -176,6 +177,7 @@ async function loadAll(){
     draw('weeklyChart','bar', d.weekly.map(x=>x.week.slice(5)), d.weekly.map(x=>x.sales), 'Sales');
     draw('payChart','pie', d.paymentSplit.map(x=>x.payment), d.paymentSplit.map(x=>x.sales), 'Sales');
     draw('topChart','bar', d.topItems.map(x=>x.name), d.topItems.map(x=>x.sales), 'Sales');
+    if(!d.totalSales){ document.getElementById('noDataMsg').classList.remove('hidden'); document.querySelectorAll('#app .card')[0].querySelectorAll('.row').forEach(r=>r.style.display='none'); }
   }catch(e){
     const lo = localOrders(); const lc = localCosts();
     const sales = lo.reduce((s,o)=>s+o.total,0); const costs = lc.reduce((s,c)=>s+Number(c.amount||0),0);
@@ -184,6 +186,7 @@ async function loadAll(){
       <div class="kpi"><span>Total Costs (this device)</span><b>\u20b9${costs}</b></div>
       <div class="kpi"><span>Profit / Loss</span><b>\u20b9${sales-costs}</b></div>
       <div class="kpi"><span>Orders saved here</span><b>${lo.length}</b></div>`;
+    if(!sales){ document.getElementById('noDataMsg').classList.remove('hidden'); document.querySelectorAll('#app .card')[0].querySelectorAll('.row').forEach(r=>r.style.display='none'); }
   }
   try{
     const o = await api('/api/orders');
