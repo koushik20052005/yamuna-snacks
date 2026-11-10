@@ -14,7 +14,10 @@ header h1{font-size:1.4rem}
 .card{background:#fff8e7;color:#2c1a0e;border-radius:20px;padding:20px;box-shadow:0 10px 28px rgba(0,0,0,.4);margin:18px 0;border-top:4px solid #f5b041}
 h2{color:#8a2f14;margin-bottom:10px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.kpi{background:linear-gradient(135deg,#ffe8b3,#ffd9a0);color:#2c1a0e;border-radius:16px;padding:16px;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.kpi{background:linear-gradient(135deg,#ffe8b3,#ffd9a0);color:#2c1a0e;border-radius:16px;padding:16px;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer}
+.kpi:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(0,0,0,.3)}
+.modal-overlay{position:fixed;inset:0;background:rgba(20,10,0,.65);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+.modal{background:#fff8e7;color:#2c1a0e;border-radius:20px;max-width:640px;width:100%;max-height:85vh;overflow:auto;padding:22px;border-top:5px solid #f5b041;box-shadow:0 20px 50px rgba(0,0,0,.5)}
 .kpi b{font-size:1.4rem;display:block}
 .kpi.profit b{color:#1e7a34}.kpi.loss b{color:#c0392b}
 input,select,textarea{width:100%;padding:12px;border:2px solid #d9a05b;border-radius:10px;font-size:1rem;margin:6px 0;background:#fffdf6;color:#2c1a0e}
@@ -107,6 +110,9 @@ canvas{max-width:100%}
 </section>
 </div>
 </main>
+<div id="kpiModal" class="modal-overlay hidden" onclick="if(event.target===this) closeKpi()">
+<div class="modal"><div style="display:flex;justify-content:space-between;align-items:center"><h2 id="kpiTitle" style="margin:0">Details</h2><button type="button" onclick="closeKpi()" style="width:44px;height:44px;padding:0">✕</button></div><div id="kpiBody" style="margin-top:12px"></div></div>
+</div>
 <nav class="bottom hidden" id="bottomNav">
 <button onclick="showSection('dashboard')">Dashboard</button>
 <button onclick="document.querySelectorAll('.card')[1].scrollIntoView()">Add Order</button>
@@ -127,10 +133,11 @@ let DB_OK = true;
 function localPrices(){ try{ return JSON.parse(localStorage.getItem('yamuna_prices')||'{}'); }catch(e){ return {}; } }
 function menuWithLocalPrices(items){ const p = localPrices(); return items.map(it=>({...it, price: p[it.id]!==undefined ? p[it.id] : it.price})); }
 function localOrders(){ try{ return JSON.parse(localStorage.getItem('yamuna_local_orders')||'[]'); }catch(e){ return []; } }
-function saveLocalOrder(o){ const a = localOrders(); a.unshift(o); localStorage.setItem('yamuna_local_orders', JSON.stringify(a.slice(0,50))); }
+function saveLocalOrder(o){ const a = localOrders(); o.created_at = new Date().toISOString(); a.unshift(o); localStorage.setItem('yamuna_local_orders', JSON.stringify(a.slice(0,50))); }
 function localCosts(){ try{ return JSON.parse(localStorage.getItem('yamuna_local_costs')||'[]'); }catch(e){ return []; } }
 function showDbWarning(msg){ const el = document.getElementById('dbWarning'); el.classList.remove('hidden'); el.textContent = msg; }
 let MENU = menuWithLocalPrices(FALLBACK_MENU);
+let DASH = null, ALL_ORDERS = [], ALL_COSTS = [];
 let CART = {};
 let LAST_BILL = '';
 function headers(){ return {'Content-Type':'application/json','x-billing-token':TOKEN}; }
@@ -154,6 +161,38 @@ async function unlock(){
   }catch(e){ document.getElementById('pinError').textContent = e.message; }
   document.getElementById('pinBtn').textContent = 'Open Billing →';
 }
+
+function orderDate(o){ return o.created_at ? new Date(o.created_at) : new Date(); }
+function sameDay(a,b){ return a.toDateString()===b.toDateString(); }
+function ordersIn(days){ const now = new Date(); return ALL_ORDERS.filter(o=>{ const d = orderDate(o); return (now-d)/(1000*60*60*24) <= days; }); }
+function costsIn(days){ const now = new Date(); return ALL_COSTS.filter(c=>{ const d = c.cost_date ? new Date(c.cost_date) : now; return (now-d)/(1000*60*60*24) <= days; }); }
+function orderRows(list){ return list.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + list.map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${(x.items||[]).map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment||''}</td><td>\u20b9${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders in this period yet.</p>'; }
+function costRows(list){ return list.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + list.map(x=>`<tr><td>${(x.cost_date||'').slice(0,10)}</td><td>${x.category||''}</td><td>\u20b9${x.amount}</td></tr>`).join('') + '</table>' : '<p>No material costs recorded in this period.</p>'; }
+window.openKpi = function(kind){
+  const now = new Date(); let title='', orders=[], costs=ALL_COSTS, sales=0, costTotal=0;
+  if(kind==='today'){ title = 'Today — ' + now.toDateString(); orders = ALL_ORDERS.filter(o=>sameDay(orderDate(o), now)); costs = costsIn(1); }
+  else if(kind==='week'){ title = 'This Week'; orders = ordersIn(7); costs = costsIn(7); }
+  else if(kind==='month'){ title = 'This Month'; orders = ordersIn(31); costs = costsIn(31); }
+  else if(kind==='costs'){ title = 'Total Material Costs'; orders = []; }
+  else if(kind==='profit'){ title = 'Profit / Loss Breakdown'; orders = ALL_ORDERS; }
+  else { title = 'Total Sales — All Orders'; orders = ALL_ORDERS; }
+  sales = orders.reduce((s,o)=>s+Number(o.total||0),0);
+  costTotal = costs.reduce((s,c)=>s+Number(c.amount||0),0);
+  if(kind==='total'){ sales = DASH ? DASH.totalSales : sales; costTotal = DASH ? DASH.totalCosts : costTotal; }
+  if(kind==='profit'){ sales = DASH ? DASH.totalSales : sales; costTotal = DASH ? DASH.totalCosts : costTotal; }
+  document.getElementById('kpiTitle').textContent = title;
+  document.getElementById('kpiBody').innerHTML = `
+    <div class="kpis" style="margin-bottom:14px">
+      <div class="kpi" style="cursor:default"><span>Sales</span><b>\u20b9${sales}</b></div>
+      <div class="kpi" style="cursor:default"><span>Material Costs</span><b>\u20b9${costTotal}</b></div>
+      <div class="kpi ${sales-costTotal>=0?'profit':'loss'}" style="cursor:default"><span>Profit / Loss</span><b>\u20b9${sales-costTotal}</b></div>
+      <div class="kpi" style="cursor:default"><span>Orders</span><b>${orders.length}</b></div>
+    </div>
+    <h3>Orders</h3>${orderRows(orders)}
+    <h3 style="margin-top:16px">Material Costs</h3>${costRows(costs)}`;
+  document.getElementById('kpiModal').classList.remove('hidden');
+};
+window.closeKpi = function(){ document.getElementById('kpiModal').classList.add('hidden'); };
 function showSection(){ document.querySelector('.card').scrollIntoView(); }
 let charts = {};
 function draw(id, type, labels, data, label){
@@ -167,15 +206,15 @@ async function loadAll(){
   catch(e){ DB_OK = false; MENU = menuWithLocalPrices(FALLBACK_MENU); showDbWarning('Database not connected yet — showing the usual menu. Orders are saved on this device until the Neon database is connected in Vercel.'); }
   renderOrderForm(); renderPrices();
   try{
-    const d = await api('/api/dashboard');
+    const d = await api('/api/dashboard'); DASH = d;
     const cls = d.profit >= 0 ? 'profit' : 'loss';
     document.getElementById('kpis').innerHTML = `
-      <div class="kpi"><span>Total Sales</span><b>\u20b9${d.totalSales}</b></div>
-      <div class="kpi"><span>Total Costs</span><b>\u20b9${d.totalCosts}</b></div>
-      <div class="kpi ${cls}"><span>Profit / Loss</span><b>\u20b9${d.profit}</b></div>
-      <div class="kpi"><span>Today</span><b>\u20b9${d.today}</b></div>
-      <div class="kpi"><span>This Week</span><b>\u20b9${d.week}</b></div>
-      <div class="kpi"><span>This Month</span><b>\u20b9${d.month}</b></div>`;
+      <div class="kpi" onclick="openKpi('total')"><span>Total Sales</span><b>\u20b9${d.totalSales}</b><small>Tap for orders →</small></div>
+      <div class="kpi" onclick="openKpi('costs')"><span>Total Costs</span><b>\u20b9${d.totalCosts}</b><small>Tap for costs →</small></div>
+      <div class="kpi ${cls}" onclick="openKpi('profit')"><span>Profit / Loss</span><b>\u20b9${d.profit}</b><small>Tap for breakdown →</small></div>
+      <div class="kpi" onclick="openKpi('today')"><span>Today</span><b>\u20b9${d.today}</b><small>Tap for today's orders →</small></div>
+      <div class="kpi" onclick="openKpi('week')"><span>This Week</span><b>\u20b9${d.week}</b><small>Tap for this week →</small></div>
+      <div class="kpi" onclick="openKpi('month')"><span>This Month</span><b>\u20b9${d.month}</b><small>Tap for this month →</small></div>`;
     draw('dailyChart','bar', d.daily.map(x=>x.day.slice(5)), d.daily.map(x=>x.sales), 'Sales');
     draw('weeklyChart','bar', d.weekly.map(x=>x.week.slice(5)), d.weekly.map(x=>x.sales), 'Sales');
     if(d.paymentSplit && d.paymentSplit.length) draw('payChart','pie', d.paymentSplit.map(x=>x.payment), d.paymentSplit.map(x=>x.sales), 'Sales');
@@ -185,24 +224,25 @@ async function loadAll(){
     const lo = localOrders(); const lc = localCosts();
     const sales = lo.reduce((s,o)=>s+o.total,0); const costs = lc.reduce((s,c)=>s+Number(c.amount||0),0);
     document.getElementById('kpis').innerHTML = `
-      <div class="kpi"><span>Total Sales (this device)</span><b>\u20b9${sales}</b></div>
-      <div class="kpi"><span>Total Costs (this device)</span><b>\u20b9${costs}</b></div>
-      <div class="kpi"><span>Profit / Loss</span><b>\u20b9${sales-costs}</b></div>
-      <div class="kpi"><span>Orders saved here</span><b>${lo.length}</b></div>`;
+      <div class="kpi" onclick="openKpi('total')"><span>Total Sales (this device)</span><b>\u20b9${sales}</b><small>Tap for orders →</small></div>
+      <div class="kpi" onclick="openKpi('costs')"><span>Total Costs (this device)</span><b>\u20b9${costs}</b><small>Tap for costs →</small></div>
+      <div class="kpi" onclick="openKpi('profit')"><span>Profit / Loss</span><b>\u20b9${sales-costs}</b><small>Tap for breakdown →</small></div>
+      <div class="kpi" onclick="openKpi('today')"><span>Orders saved here</span><b>${lo.length}</b><small>Tap for today's orders →</small></div>`;
+    DASH = {totalSales: sales, totalCosts: costs, profit: sales-costs, today: sales, week: sales, month: sales};
     if(!sales){ document.getElementById('noDataMsg').classList.remove('hidden'); document.querySelectorAll('#app .card')[0].querySelectorAll('.row').forEach(r=>r.style.display='none'); }
   }
   try{
-    const o = await api('/api/orders');
+    const o = await api('/api/orders'); ALL_ORDERS = o.orders || [];
     document.getElementById('ordersList').innerHTML = o.orders.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + o.orders.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>\u20b9${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet.</p>';
   }catch(e){
-    const lo = localOrders();
+    const lo = localOrders(); ALL_ORDERS = lo;
     document.getElementById('ordersList').innerHTML = lo.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + lo.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>\u20b9${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet. Add one above — pick items with + first.</p>';
   }
   try{
-    const c = await api('/api/costs');
+    const c = await api('/api/costs'); ALL_COSTS = c.costs || [];
     document.getElementById('costsList').innerHTML = c.costs.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + c.costs.slice(0,20).map(x=>`<tr><td>${x.cost_date.slice(0,10)}</td><td>${x.category}</td><td>\u20b9${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
   }catch(e){
-    const lc = localCosts();
+    const lc = localCosts(); ALL_COSTS = lc;
     document.getElementById('costsList').innerHTML = lc.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + lc.slice(0,20).map(x=>`<tr><td>${x.cost_date||''}</td><td>${x.category}</td><td>\u20b9${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
   }
 }
