@@ -58,3 +58,5 @@ Open the local URL Vercel prints. The shop site is at `/` and billing is at `/bi
 ## Security
 
 No real secret is stored in this repo. Do not commit a `.env` file, a Neon connection string, a database password, or a billing code. The only environment variable names are `DATABASE_URL` and `BILLING_PIN`, and `.env.example` contains placeholders only.
+
+Last updated: 2026-11-10 — professional billing with clickable KPI popups.
