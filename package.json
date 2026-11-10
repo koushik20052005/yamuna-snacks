@@ -1,0 +1,1 @@
+{"dependencies":{"@neondatabase/serverless":"^0.10.4"},"description":"Yamuna Snacks — Hyderabad evening street-food shop website and PIN-protected billing system, backed by Neon Postgres.","name":"yamuna-snacks","private":true,"scripts":{"dev":"npx vercel dev","start":"npx vercel dev"},"type":"module","version":"1.0.0"}

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yamuna Snacks — Billing</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#fff8ec;color:#2c1a0e;line-height:1.5}
+.wrap{max-width:1060px;margin:0 auto;padding:0 16px 90px}
+header{background:#c0392b;color:#fff;padding:18px 0}
+header h1{font-size:1.4rem}
+.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 4px 14px rgba(0,0,0,.07);margin:16px 0}
+h2{color:#c0392b;margin-bottom:10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{background:#fff8ec;border-radius:12px;padding:14px}
+.kpi b{font-size:1.4rem;display:block}
+.kpi.profit b{color:#1e7a34}.kpi.loss b{color:#c0392b}
+input,select,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0}
+label{font-weight:700;font-size:.9rem}
+button{padding:13px 20px;border-radius:999px;border:0;background:#c0392b;color:#fff;font-weight:800;cursor:pointer;font-size:1rem;width:100%}
+button.secondary{background:#2c1a0e}
+button.wa{background:#25d366}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.item-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #eee}
+.item-row input{width:90px}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:8px 4px;border-bottom:1px solid #eee;text-align:left}
+nav.bottom{position:fixed;bottom:0;left:0;right:0;background:#2c1a0e;color:#fff;display:flex;justify-content:space-around;padding:10px 0}
+nav.bottom button{background:none;width:auto;padding:8px 10px;font-size:.9rem}
+.hidden{display:none}
+.error{color:#c0392b;font-weight:700}
+canvas{max-width:100%}
+@media (max-width:640px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="wrap" style="padding-bottom:0"><h1>Yamuna Snacks — Billing</h1><p>Shop staff only. Private billing system.</p></div></header>
+<main class="wrap">
+
+<section class="card" id="pinCard">
+<h2>Enter Billing Code</h2>
+<p>This is the shop's private billing system. Enter the billing code to continue.</p>
+<label>Billing code</label>
+<input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="Enter the billing code">
+<p class="error" id="pinError"></p>
+<button id="pinBtn" onclick="unlock()">Open Billing →</button>
+<p style="margin-top:10px;font-size:.9rem">Type the billing code first — the button works once you type it. <a href="/">← Back to the shop site</a></p>
+</section>
+
+<div id="app" class="hidden">
+<section class="card">
+<h2>Dashboard</h2>
+<div class="kpis" id="kpis"></div>
+<div class="row" style="margin-top:14px">
+<div><h3>Daily Sales (last 14 days)</h3><canvas id="dailyChart"></canvas></div>
+<div><h3>Weekly Sales</h3><canvas id="weeklyChart"></canvas></div>
+</div>
+<div class="row" style="margin-top:14px">
+<div><h3>Cash vs Online</h3><canvas id="payChart"></canvas></div>
+<div><h3>Best-Selling Items</h3><canvas id="topChart"></canvas></div>
+</div>
+</section>
+
+<section class="card">
+<h2>Add Order</h2>
+<label>Customer name (optional)</label><input id="oName" placeholder="Customer name">
+<label>Phone (optional)</label><input id="oPhone" placeholder="Phone number">
+<label>WhatsApp number for bill (optional)</label><input id="oWa" placeholder="WhatsApp number">
+<label>Payment</label><select id="oPay"><option value="cash">Cash</option><option value="online">Online</option></select>
+<div id="orderItems"></div>
+<p><strong>Total: ₹<span id="oTotal">0</span></strong></p>
+<button onclick="saveOrder()">Save Order</button>
+<p id="orderMsg"></p>
+<button class="wa hidden" id="waBtn" onclick="sendWa()">Send Bill on WhatsApp</button>
+</section>
+
+<section class="card">
+<h2>Recent Orders</h2>
+<div id="ordersList"><p>Loading…</p></div>
+</section>
+
+<section class="card">
+<h2>Daily Material Cost</h2>
+<div class="row">
+<div><label>Date</label><input id="cDate" type="date"></div>
+<div><label>Category</label><input id="cCat" value="Materials"></div>
+</div>
+<label>Amount (₹)</label><input id="cAmt" type="number" min="0" placeholder="0">
+<label>Note (optional)</label><input id="cNote" placeholder="e.g. rice flour, eggs, oil">
+<button onclick="saveCost()">Add Cost</button>
+<p id="costMsg"></p>
+<div id="costsList"></div>
+</section>
+
+<section class="card">
+<h2>Prices</h2>
+<p>Edit a menu price and save it. The public menu uses the same prices.</p>
+<div id="priceList"></div>
+</section>
+</div>
+</main>
+<nav class="bottom hidden" id="bottomNav">
+<button onclick="showSection('dashboard')">Dashboard</button>
+<button onclick="document.querySelectorAll('.card')[1].scrollIntoView()">Add Order</button>
+<button onclick="document.querySelectorAll('.card')[3].scrollIntoView()">Costs</button>
+<button onclick="document.querySelectorAll('.card')[4].scrollIntoView()">Prices</button>
+</nav>
+
+<script>
+let TOKEN = sessionStorage.getItem('yamuna_billing_token') || '';
+let MENU = [];
+let CART = {};
+let LAST_BILL = '';
+function headers(){ return {'Content-Type':'application/json','x-billing-token':TOKEN}; }
+async function api(path, opts={}){ const r = await fetch(path, {...opts, headers: headers()}); const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }
+document.getElementById('pinInput').addEventListener('input', e=>{ document.getElementById('pinBtn').disabled = !e.target.value.trim(); });
+document.getElementById('pinBtn').disabled = true;
+if(TOKEN){ document.getElementById('pinCard').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); document.getElementById('bottomNav').classList.remove('hidden'); loadAll(); }
+async function unlock(){
+  const pin = document.getElementById('pinInput').value.trim();
+  if(!pin){ document.getElementById('pinError').textContent = 'Type the billing code first.'; return; }
+  document.getElementById('pinBtn').textContent = 'Checking…';
+  try{
+    const r = await fetch('/api/verify-pin', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error || 'Wrong code. Try again.');
+    TOKEN = d.token; sessionStorage.setItem('yamuna_billing_token', TOKEN);
+    document.getElementById('pinCard').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    document.getElementById('bottomNav').classList.remove('hidden');
+    loadAll();
+  }catch(e){ document.getElementById('pinError').textContent = e.message; }
+  document.getElementById('pinBtn').textContent = 'Open Billing →';
+}
+function showSection(){ document.querySelector('.card').scrollIntoView(); }
+let charts = {};
+function draw(id, type, labels, data, label){
+  if(charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), {type, data:{labels, datasets:[{label, data, backgroundColor:['#c0392b','#e67e22','#f5b041','#1e7a34','#2c1a0e']}]}, options:{responsive:true, plugins:{legend:{display:type==='pie'}}}});
+}
+async function loadAll(){
+  try{
+    const m = await api('/api/menu'); MENU = m.items || [];
+    renderOrderForm(); renderPrices();
+    const d = await api('/api/dashboard');
+    const cls = d.profit >= 0 ? 'profit' : 'loss';
+    document.getElementById('kpis').innerHTML = `
+      <div class="kpi"><span>Total Sales</span><b>₹${d.totalSales}</b></div>
+      <div class="kpi"><span>Total Costs</span><b>₹${d.totalCosts}</b></div>
+      <div class="kpi ${cls}"><span>Profit / Loss</span><b>₹${d.profit}</b></div>
+      <div class="kpi"><span>Today</span><b>₹${d.today}</b></div>
+      <div class="kpi"><span>This Week</span><b>₹${d.week}</b></div>
+      <div class="kpi"><span>This Month</span><b>₹${d.month}</b></div>`;
+    draw('dailyChart','bar', d.daily.map(x=>x.day.slice(5)), d.daily.map(x=>x.sales), 'Sales');
+    draw('weeklyChart','bar', d.weekly.map(x=>x.week.slice(5)), d.weekly.map(x=>x.sales), 'Sales');
+    draw('payChart','pie', d.paymentSplit.map(x=>x.payment), d.paymentSplit.map(x=>x.sales), 'Sales');
+    draw('topChart','bar', d.topItems.map(x=>x.name), d.topItems.map(x=>x.sales), 'Sales');
+    const o = await api('/api/orders');
+    document.getElementById('ordersList').innerHTML = o.orders.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + o.orders.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>₹${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet.</p>';
+    const c = await api('/api/costs');
+    document.getElementById('costsList').innerHTML = c.costs.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + c.costs.slice(0,20).map(x=>`<tr><td>${x.cost_date.slice(0,10)}</td><td>${x.category}</td><td>₹${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
+  }catch(e){ document.getElementById('pinError').textContent = e.message; document.getElementById('pinCard').classList.remove('hidden'); }
+}
+function renderOrderForm(){
+  document.getElementById('orderItems').innerHTML = MENU.map(it=>`
+    <div class="item-row"><span>${it.name} — ₹${it.price}</span><span><button type="button" style="width:44px" onclick="chQty(${it.id},-1)">−</button> <b id="cq-${it.id}">0</b> <button type="button" style="width:44px" onclick="chQty(${it.id},1)">+</button></span></div>`).join('');
+}
+window.chQty = function(id,d){ CART[id]=(CART[id]||0)+d; if(CART[id]<0)CART[id]=0; document.getElementById('cq-'+id).textContent=CART[id]; const t=MENU.reduce((s,it)=>s+it.price*(CART[it.id]||0),0); document.getElementById('oTotal').textContent=t; };
+async function saveOrder(){
+  const items = MENU.filter(it=>CART[it.id]>0).map(it=>({menu_item_id:it.id, name:it.name, price:it.price, qty:CART[it.id]}));
+  if(!items.length){ document.getElementById('orderMsg').textContent='Add at least one item.'; return; }
+  const total = items.reduce((s,i)=>s+i.price*i.qty,0);
+  const body = {customer_name:document.getElementById('oName').value||null, phone:document.getElementById('oPhone').value||null, whatsapp:document.getElementById('oWa').value||null, payment:document.getElementById('oPay').value, items};
+  try{
+    const d = await api('/api/orders', {method:'POST', body: JSON.stringify(body)});
+    LAST_BILL = `Yamuna Snacks — Bill #${d.order.id}\n` + items.map(i=>`${i.name} x ${i.qty} = ₹${i.price*i.qty}`).join('\n') + `\nTotal: ₹${total}\nPayment: ${body.payment}\nThank you!`;
+    document.getElementById('orderMsg').textContent = 'Order #'+d.order.id+' saved. Total ₹'+total;
+    document.getElementById('waBtn').classList.toggle('hidden', !body.whatsapp);
+    CART={}; renderOrderForm(); document.getElementById('oTotal').textContent='0'; loadAll();
+  }catch(e){ document.getElementById('orderMsg').textContent = e.message; }
+}
+function sendWa(){
+  const wa = document.getElementById('oWa').value.trim().replace(/\D/g,'');
+  if(wa) window.open('https://wa.me/91'+wa+'?text='+encodeURIComponent(LAST_BILL), '_blank');
+}
+async function saveCost(){
+  const body = {cost_date: document.getElementById('cDate').value || undefined, category: document.getElementById('cCat').value, amount: Number(document.getElementById('cAmt').value||0), note: document.getElementById('cNote').value||null};
+  try{ await api('/api/costs', {method:'POST', body: JSON.stringify(body)}); document.getElementById('costMsg').textContent='Cost saved.'; loadAll(); }
+  catch(e){ document.getElementById('costMsg').textContent = e.message; }
+}
+function renderPrices(){
+  document.getElementById('priceList').innerHTML = MENU.map(it=>`
+    <div class="item-row"><span>${it.name}</span><span>₹ <input id="p-${it.id}" type="number" value="${it.price}" min="0"> <button type="button" style="width:auto" onclick="savePrice(${it.id})">Save</button></span></div>`).join('');
+}
+window.savePrice = async function(id){
+  const price = Number(document.getElementById('p-'+id).value||0);
+  try{ await api('/api/menu', {method:'PUT', body: JSON.stringify({id, price})}); loadAll(); }
+  catch(e){ alert(e.message); }
+};
+document.getElementById('cDate').value = new Date().toISOString().slice(0,10);
+</script>
+</body>
+</html>
