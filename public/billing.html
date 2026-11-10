@@ -7,17 +7,17 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#fff8ec;color:#2c1a0e;line-height:1.5}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#2c1a0e;color:#ffe8b3;line-height:1.5}
 .wrap{max-width:1060px;margin:0 auto;padding:0 16px 90px}
-header{background:#c0392b;color:#fff;padding:18px 0}
+header{background:#1f1208;color:#ffe8b3;padding:18px 0;border-bottom:4px solid #e67e22}
 header h1{font-size:1.4rem}
-.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 4px 14px rgba(0,0,0,.07);margin:16px 0}
-h2{color:#c0392b;margin-bottom:10px}
+.card{background:#fff3d6;color:#2c1a0e;border-radius:16px;padding:18px;box-shadow:0 4px 14px rgba(0,0,0,.35);margin:16px 0}
+h2{color:#8a2f14;margin-bottom:10px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.kpi{background:#fff8ec;border-radius:12px;padding:14px}
+.kpi{background:#ffe8b3;color:#2c1a0e;border-radius:12px;padding:14px}
 .kpi b{font-size:1.4rem;display:block}
 .kpi.profit b{color:#1e7a34}.kpi.loss b{color:#c0392b}
-input,select,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0}
+input,select,textarea{width:100%;padding:12px;border:2px solid #d9a05b;border-radius:10px;font-size:1rem;margin:6px 0;background:#fffdf6;color:#2c1a0e}
 label{font-weight:700;font-size:.9rem}
 button{padding:13px 20px;border-radius:999px;border:0;background:#c0392b;color:#fff;font-weight:800;cursor:pointer;font-size:1rem;width:100%}
 button.secondary{background:#2c1a0e}
@@ -63,8 +63,10 @@ canvas{max-width:100%}
 </div>
 </section>
 
+<div class="card hidden" id="dbWarning" style="background:#f5b041;color:#2c1a0e;font-weight:700"></div>
 <section class="card">
 <h2>Add Order</h2>
+<p style="font-weight:700;margin-bottom:8px">Step 1 — Select items below (tap +). Step 2 — fill the name / phone if you want. Step 3 — tap Save Order.</p>
 <label>Customer name (optional)</label><input id="oName" placeholder="Customer name">
 <label>Phone (optional)</label><input id="oPhone" placeholder="Phone number">
 <label>WhatsApp number for bill (optional)</label><input id="oWa" placeholder="WhatsApp number">
@@ -110,7 +112,21 @@ canvas{max-width:100%}
 
 <script>
 let TOKEN = sessionStorage.getItem('yamuna_billing_token') || '';
-let MENU = [];
+const FALLBACK_MENU = [
+  {id:1,name:'Bread Omelette (double egg)',price:45,unit:'plate'},
+  {id:2,name:'Sarva Pindi',price:40,unit:'plate'},
+  {id:3,name:'Muntha Masala',price:40,unit:'plate'},
+  {id:4,name:'Ponganalu',price:40,unit:'plate'},
+  {id:5,name:'Egg Pouch (2 eggs)',price:35,unit:'plate'}
+];
+let DB_OK = true;
+function localPrices(){ try{ return JSON.parse(localStorage.getItem('yamuna_prices')||'{}'); }catch(e){ return {}; } }
+function menuWithLocalPrices(items){ const p = localPrices(); return items.map(it=>({...it, price: p[it.id]!==undefined ? p[it.id] : it.price})); }
+function localOrders(){ try{ return JSON.parse(localStorage.getItem('yamuna_local_orders')||'[]'); }catch(e){ return []; } }
+function saveLocalOrder(o){ const a = localOrders(); a.unshift(o); localStorage.setItem('yamuna_local_orders', JSON.stringify(a.slice(0,50))); }
+function localCosts(){ try{ return JSON.parse(localStorage.getItem('yamuna_local_costs')||'[]'); }catch(e){ return []; } }
+function showDbWarning(msg){ const el = document.getElementById('dbWarning'); el.classList.remove('hidden'); el.textContent = msg; }
+let MENU = menuWithLocalPrices(FALLBACK_MENU);
 let CART = {};
 let LAST_BILL = '';
 function headers(){ return {'Content-Type':'application/json','x-billing-token':TOKEN}; }
@@ -141,31 +157,52 @@ function draw(id, type, labels, data, label){
   charts[id] = new Chart(document.getElementById(id), {type, data:{labels, datasets:[{label, data, backgroundColor:['#c0392b','#e67e22','#f5b041','#1e7a34','#2c1a0e']}]}, options:{responsive:true, plugins:{legend:{display:type==='pie'}}}});
 }
 async function loadAll(){
+  // Menu first, always: use the Neon menu when it works, otherwise the built-in menu.
+  // The old code stopped here when the database was not set up, so no items ever showed.
+  try{ const m = await api('/api/menu'); if(m.items && m.items.length){ MENU = menuWithLocalPrices(m.items); DB_OK = true; } }
+  catch(e){ DB_OK = false; MENU = menuWithLocalPrices(FALLBACK_MENU); showDbWarning('Database not connected yet — showing the usual menu. Orders are saved on this device until the Neon database is connected in Vercel.'); }
+  renderOrderForm(); renderPrices();
   try{
-    const m = await api('/api/menu'); MENU = m.items || [];
-    renderOrderForm(); renderPrices();
     const d = await api('/api/dashboard');
     const cls = d.profit >= 0 ? 'profit' : 'loss';
     document.getElementById('kpis').innerHTML = `
-      <div class="kpi"><span>Total Sales</span><b>₹${d.totalSales}</b></div>
-      <div class="kpi"><span>Total Costs</span><b>₹${d.totalCosts}</b></div>
-      <div class="kpi ${cls}"><span>Profit / Loss</span><b>₹${d.profit}</b></div>
-      <div class="kpi"><span>Today</span><b>₹${d.today}</b></div>
-      <div class="kpi"><span>This Week</span><b>₹${d.week}</b></div>
-      <div class="kpi"><span>This Month</span><b>₹${d.month}</b></div>`;
+      <div class="kpi"><span>Total Sales</span><b>\u20b9${d.totalSales}</b></div>
+      <div class="kpi"><span>Total Costs</span><b>\u20b9${d.totalCosts}</b></div>
+      <div class="kpi ${cls}"><span>Profit / Loss</span><b>\u20b9${d.profit}</b></div>
+      <div class="kpi"><span>Today</span><b>\u20b9${d.today}</b></div>
+      <div class="kpi"><span>This Week</span><b>\u20b9${d.week}</b></div>
+      <div class="kpi"><span>This Month</span><b>\u20b9${d.month}</b></div>`;
     draw('dailyChart','bar', d.daily.map(x=>x.day.slice(5)), d.daily.map(x=>x.sales), 'Sales');
     draw('weeklyChart','bar', d.weekly.map(x=>x.week.slice(5)), d.weekly.map(x=>x.sales), 'Sales');
     draw('payChart','pie', d.paymentSplit.map(x=>x.payment), d.paymentSplit.map(x=>x.sales), 'Sales');
     draw('topChart','bar', d.topItems.map(x=>x.name), d.topItems.map(x=>x.sales), 'Sales');
+  }catch(e){
+    const lo = localOrders(); const lc = localCosts();
+    const sales = lo.reduce((s,o)=>s+o.total,0); const costs = lc.reduce((s,c)=>s+Number(c.amount||0),0);
+    document.getElementById('kpis').innerHTML = `
+      <div class="kpi"><span>Total Sales (this device)</span><b>\u20b9${sales}</b></div>
+      <div class="kpi"><span>Total Costs (this device)</span><b>\u20b9${costs}</b></div>
+      <div class="kpi"><span>Profit / Loss</span><b>\u20b9${sales-costs}</b></div>
+      <div class="kpi"><span>Orders saved here</span><b>${lo.length}</b></div>`;
+  }
+  try{
     const o = await api('/api/orders');
-    document.getElementById('ordersList').innerHTML = o.orders.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + o.orders.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>₹${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet.</p>';
+    document.getElementById('ordersList').innerHTML = o.orders.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + o.orders.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>\u20b9${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet.</p>';
+  }catch(e){
+    const lo = localOrders();
+    document.getElementById('ordersList').innerHTML = lo.length ? '<table><tr><th>Order</th><th>Items</th><th>Pay</th><th>Total</th></tr>' + lo.slice(0,20).map(x=>`<tr><td>#${x.id}<br>${x.customer_name||''}</td><td>${x.items.map(i=>i.name+' x'+i.qty).join(', ')}</td><td>${x.payment}</td><td>\u20b9${x.total}</td></tr>`).join('') + '</table>' : '<p>No orders yet. Add one above — pick items with + first.</p>';
+  }
+  try{
     const c = await api('/api/costs');
-    document.getElementById('costsList').innerHTML = c.costs.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + c.costs.slice(0,20).map(x=>`<tr><td>${x.cost_date.slice(0,10)}</td><td>${x.category}</td><td>₹${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
-  }catch(e){ document.getElementById('pinError').textContent = e.message; document.getElementById('pinCard').classList.remove('hidden'); }
+    document.getElementById('costsList').innerHTML = c.costs.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + c.costs.slice(0,20).map(x=>`<tr><td>${x.cost_date.slice(0,10)}</td><td>${x.category}</td><td>\u20b9${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
+  }catch(e){
+    const lc = localCosts();
+    document.getElementById('costsList').innerHTML = lc.length ? '<table><tr><th>Date</th><th>Category</th><th>Amount</th></tr>' + lc.slice(0,20).map(x=>`<tr><td>${x.cost_date||''}</td><td>${x.category}</td><td>\u20b9${x.amount}</td></tr>`).join('') + '</table>' : '<p>No costs yet.</p>';
+  }
 }
 function renderOrderForm(){
-  document.getElementById('orderItems').innerHTML = MENU.map(it=>`
-    <div class="item-row"><span>${it.name} — ₹${it.price}</span><span><button type="button" style="width:44px" onclick="chQty(${it.id},-1)">−</button> <b id="cq-${it.id}">0</b> <button type="button" style="width:44px" onclick="chQty(${it.id},1)">+</button></span></div>`).join('');
+  document.getElementById('orderItems').innerHTML = MENU.length ? MENU.map(it=>`
+    <div class="item-row"><span><b>${it.name}</b><br>₹${it.price} / ${it.unit||'plate'}</span><span><button type="button" style="width:48px;height:48px;font-size:1.4rem" onclick="chQty(${it.id},-1)">−</button> <b id="cq-${it.id}" style="font-size:1.2rem;min-width:24px;display:inline-block;text-align:center">${CART[it.id]||0}</b> <button type="button" style="width:48px;height:48px;font-size:1.4rem" onclick="chQty(${it.id},1)">+</button></span></div>`).join('') : '<p class="error">No menu items loaded. Reload the page.</p>';
 }
 window.chQty = function(id,d){ CART[id]=(CART[id]||0)+d; if(CART[id]<0)CART[id]=0; document.getElementById('cq-'+id).textContent=CART[id]; const t=MENU.reduce((s,it)=>s+it.price*(CART[it.id]||0),0); document.getElementById('oTotal').textContent=t; };
 async function saveOrder(){
@@ -173,13 +210,19 @@ async function saveOrder(){
   if(!items.length){ document.getElementById('orderMsg').textContent='Add at least one item.'; return; }
   const total = items.reduce((s,i)=>s+i.price*i.qty,0);
   const body = {customer_name:document.getElementById('oName').value||null, phone:document.getElementById('oPhone').value||null, whatsapp:document.getElementById('oWa').value||null, payment:document.getElementById('oPay').value, items};
+  let orderId = null;
   try{
     const d = await api('/api/orders', {method:'POST', body: JSON.stringify(body)});
-    LAST_BILL = `Yamuna Snacks — Bill #${d.order.id}\n` + items.map(i=>`${i.name} x ${i.qty} = ₹${i.price*i.qty}`).join('\n') + `\nTotal: ₹${total}\nPayment: ${body.payment}\nThank you!`;
-    document.getElementById('orderMsg').textContent = 'Order #'+d.order.id+' saved. Total ₹'+total;
-    document.getElementById('waBtn').classList.toggle('hidden', !body.whatsapp);
-    CART={}; renderOrderForm(); document.getElementById('oTotal').textContent='0'; loadAll();
-  }catch(e){ document.getElementById('orderMsg').textContent = e.message; }
+    orderId = d.order.id;
+  }catch(e){
+    orderId = 'L' + Date.now().toString().slice(-6);
+    saveLocalOrder({id: orderId, customer_name: body.customer_name, phone: body.phone, whatsapp: body.whatsapp, payment: body.payment, items, total});
+    document.getElementById('orderMsg').textContent = 'Saved on this device (database not connected yet). Order #'+orderId+'. Total ₹'+total;
+  }
+  LAST_BILL = `Yamuna Snacks — Bill #${orderId}\n` + items.map(i=>`${i.name} x ${i.qty} = ₹${i.price*i.qty}`).join('\n') + `\nTotal: ₹${total}\nPayment: ${body.payment}\nThank you!`;
+  if(DB_OK) document.getElementById('orderMsg').textContent = 'Order #'+orderId+' saved. Total ₹'+total;
+  document.getElementById('waBtn').classList.toggle('hidden', !body.whatsapp);
+  CART={}; renderOrderForm(); document.getElementById('oTotal').textContent='0'; loadAll();
 }
 function sendWa(){
   const wa = document.getElementById('oWa').value.trim().replace(/\D/g,'');
@@ -188,7 +231,7 @@ function sendWa(){
 async function saveCost(){
   const body = {cost_date: document.getElementById('cDate').value || undefined, category: document.getElementById('cCat').value, amount: Number(document.getElementById('cAmt').value||0), note: document.getElementById('cNote').value||null};
   try{ await api('/api/costs', {method:'POST', body: JSON.stringify(body)}); document.getElementById('costMsg').textContent='Cost saved.'; loadAll(); }
-  catch(e){ document.getElementById('costMsg').textContent = e.message; }
+  catch(e){ const lc = localCosts(); lc.unshift({...body, cost_date: body.cost_date || new Date().toISOString().slice(0,10)}); localStorage.setItem('yamuna_local_costs', JSON.stringify(lc.slice(0,100))); document.getElementById('costMsg').textContent='Cost saved on this device (database not connected yet).'; loadAll(); }
 }
 function renderPrices(){
   document.getElementById('priceList').innerHTML = MENU.map(it=>`
@@ -197,7 +240,7 @@ function renderPrices(){
 window.savePrice = async function(id){
   const price = Number(document.getElementById('p-'+id).value||0);
   try{ await api('/api/menu', {method:'PUT', body: JSON.stringify({id, price})}); loadAll(); }
-  catch(e){ alert(e.message); }
+  catch(e){ const p = localPrices(); p[id]=price; localStorage.setItem('yamuna_prices', JSON.stringify(p)); MENU = menuWithLocalPrices(MENU); renderOrderForm(); renderPrices(); }
 };
 document.getElementById('cDate').value = new Date().toISOString().slice(0,10);
 </script>
