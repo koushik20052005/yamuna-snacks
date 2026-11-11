@@ -191,9 +191,12 @@ canvas{max-width:100%}
   <div class="modal">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">🧾 Bill</h2><button type="button" class="btn small ghost" onclick="closeBill()">✕</button></div>
     <div style="margin-top:12px"><img id="billImg" class="bill-preview" alt="Yamuna Snacks bill"></div>
-    <button class="btn" id="shareBillBtn" onclick="shareBill(this)">📤 Share Bill Image</button>
-    <button class="btn wa" onclick="sendBillWa()">💬 Send on WhatsApp</button>
+    <label style="margin-top:12px">WhatsApp number for this bill</label>
+    <input id="billWaNumber" type="tel" inputmode="tel" placeholder="10-digit WhatsApp number">
+    <button class="btn wa" id="sendBillImgWaBtn" onclick="sendBillImageWa(this)">💬 Send Bill Image on WhatsApp</button>
+    <button class="btn ghost" id="shareBillBtn" onclick="shareBill(this)">📤 Share image</button>
     <button class="btn ghost" onclick="downloadBill()">⬇️ Download Bill Image</button>
+    <p id="billWaHint" class="hidden" style="margin-top:10px;font-weight:700;color:#1e7a34">Bill image saved to your phone — in WhatsApp tap the attach (📎) button and pick the bill image to send it.</p>
   </div>
 </div>
 
@@ -500,6 +503,10 @@ function drawBillCanvas(o){
 function showBill(o){
   if(!o) return;
   LAST_ORDER = o; LAST_BILL = billText(o);
+  const numEl = document.getElementById('billWaNumber');
+  if(numEl) numEl.value = (o.whatsapp || o.phone || '');
+  const hint = document.getElementById('billWaHint');
+  if(hint) hint.classList.add('hidden');
   const canvas = drawBillCanvas(o);
   document.getElementById('billImg').src = canvas.toDataURL('image/png');
   document.getElementById('billModal').classList.remove('hidden');
@@ -531,11 +538,38 @@ function downloadBill(){
   a.download = 'yamuna-snacks-bill-'+LAST_ORDER.id+'.png';
   a.click();
 }
-function sendBillWa(){
+// WhatsApp cannot receive an image attachment from a web link, so the bill
+// image is saved to the phone first and then WhatsApp opens straight to the
+// customer's chat, where the image is attached in one tap inside that chat.
+function waNumber(raw){
+  let d = (raw || '').replace(/\D/g,'');
+  if(d.startsWith('0')) d = d.slice(1);
+  if(d.length === 12 && d.startsWith('91')) return d;
+  if(d.length === 10) return '91' + d;
+  return d;
+}
+async function sendBillImageWa(btn){
   if(!LAST_ORDER) return;
-  const wa = (LAST_ORDER.whatsapp || document.getElementById('oWa').value || '').trim().replace(/\D/g,'');
-  if(!wa){ alert('No WhatsApp number on this order. Add a WhatsApp number when creating the order, or share the bill image instead.'); return; }
-  window.open('https://wa.me/91'+wa+'?text='+encodeURIComponent(LAST_BILL), '_blank');
+  const b = setBusy(btn || document.getElementById('sendBillImgWaBtn'), 'Opening WhatsApp…');
+  if(!b) return;
+  try{
+    const numEl = document.getElementById('billWaNumber');
+    const raw = (numEl && numEl.value ? numEl.value : (LAST_ORDER.whatsapp || LAST_ORDER.phone || '')).trim();
+    const num = waNumber(raw);
+    if(num.length !== 12){
+      alert('Enter the customer\'s 10-digit WhatsApp number above first.');
+      if(numEl) numEl.focus();
+      return;
+    }
+    // 1. Save the bill image to the phone (same file as Download Bill Image).
+    downloadBill();
+    // 2. Open WhatsApp straight to that exact customer's chat, with the bill
+    //    details already typed in the message box — no chat picker.
+    window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(LAST_BILL), '_blank');
+    // 3. Tell the user the one remaining tap: attach the saved image in that chat.
+    const hint = document.getElementById('billWaHint');
+    if(hint) hint.classList.remove('hidden');
+  }finally{ clearBusy(b); }
 }
 
 /* ---------- costs ---------- */
