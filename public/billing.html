@@ -43,6 +43,10 @@ input,select,textarea{width:100%;padding:12px;border:1.5px solid #d4d5d9;border-
 .btn.ghost{background:#fff;color:var(--ink);border:2px solid var(--ink)}
 .btn.danger{background:#fff;color:var(--red);border:2px solid var(--red)}
 .btn.small{width:auto;padding:9px 14px;font-size:.85rem;margin-top:0;display:inline-block}
+.btn:disabled,.login-btn:disabled{opacity:.65;cursor:wait}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+.btn.ghost .spinner,.btn.danger .spinner{border-color:rgba(40,44,63,.25);border-top-color:#282c3f}
+@keyframes spin{to{transform:rotate(360deg)}}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 /* item picker */
 .item-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px;border:1.5px solid var(--line);border-radius:12px;margin-bottom:10px;background:#fff}
@@ -124,11 +128,11 @@ canvas{max-width:100%}
   <label>WhatsApp number for bill (optional)</label><input id="oWa" placeholder="WhatsApp number">
   <label>Payment</label><select id="oPay"><option value="cash">Cash</option><option value="online">Online</option></select>
   <p style="font-size:1.3rem;margin-top:10px"><strong>Total: ₹<span id="oTotal">0</span></strong></p>
-  <button class="btn" onclick="saveOrder()">Save Order</button>
+  <button class="btn" id="saveOrderBtn" onclick="saveOrder(this)">Save Order</button>
   <p id="orderMsg" style="margin-top:8px"></p>
   <div id="savedOrderBox" class="hidden" style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
     <button class="btn wa" id="billBtn" onclick="showBill(LAST_ORDER)">📄 View Bill &amp; Share</button>
-    <button class="btn danger" id="voidBtn" onclick="voidLastOrder()">🗑️ Delete / Void this order</button>
+    <button class="btn danger" id="voidBtn" onclick="voidLastOrder(this)">🗑️ Delete / Void this order</button>
   </div>
 </section>
 
@@ -148,7 +152,7 @@ canvas{max-width:100%}
   </div>
   <label>Amount (₹)</label><input id="cAmt" type="number" min="0" placeholder="0">
   <label>Note (optional)</label><input id="cNote" placeholder="e.g. rice flour, eggs, oil">
-  <button class="btn" onclick="saveCost()">Add Cost</button>
+  <button class="btn" onclick="saveCost(this)">Add Cost</button>
   <p id="costMsg" style="margin-top:8px"></p>
   <div id="costsList" style="margin-top:12px"></div>
 </section>
@@ -187,7 +191,7 @@ canvas{max-width:100%}
   <div class="modal">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">🧾 Bill</h2><button type="button" class="btn small ghost" onclick="closeBill()">✕</button></div>
     <div style="margin-top:12px"><img id="billImg" class="bill-preview" alt="Yamuna Snacks bill"></div>
-    <button class="btn" id="shareBillBtn" onclick="shareBill()">📤 Share Bill Image</button>
+    <button class="btn" id="shareBillBtn" onclick="shareBill(this)">📤 Share Bill Image</button>
     <button class="btn wa" onclick="sendBillWa()">💬 Send on WhatsApp</button>
     <button class="btn ghost" onclick="downloadBill()">⬇️ Download Bill Image</button>
   </div>
@@ -218,6 +222,21 @@ let LAST_ORDER = null, LAST_BILL = '';
 function headers(){ return {'Content-Type':'application/json','x-billing-token':TOKEN}; }
 async function api(path, opts={}){ const r = await fetch(path, {...opts, headers: headers()}); const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }
 
+/* ---------- button busy state (small loading spinner, blocks double-taps) ---------- */
+function setBusy(btn, text){
+  if(!btn || btn.disabled) return null;
+  btn.disabled = true;
+  btn.dataset.origHtml = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span>' + text;
+  return btn;
+}
+function clearBusy(btn){
+  if(!btn) return;
+  if(btn.dataset.origHtml !== undefined) btn.innerHTML = btn.dataset.origHtml;
+  btn.disabled = false;
+  delete btn.dataset.origHtml;
+}
+
 /* ---------- login / logout ---------- */
 function openPinModal(){ document.getElementById('pinError').textContent=''; document.getElementById('pinInput').value=''; document.getElementById('pinModal').classList.remove('hidden'); setTimeout(()=>document.getElementById('pinInput').focus(), 50); }
 function closePinModal(){ document.getElementById('pinModal').classList.add('hidden'); }
@@ -240,7 +259,8 @@ function afterLogin(){
 async function unlock(){
   const pin = document.getElementById('pinInput').value.trim();
   if(!pin){ document.getElementById('pinError').textContent = 'Type the billing code first.'; return; }
-  document.getElementById('pinBtn').textContent = 'Checking…';
+  const b = setBusy(document.getElementById('pinBtn'), 'Checking…');
+  if(!b) return;
   try{
     const r = await fetch('/api/verify-pin', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})});
     const d = await r.json();
@@ -248,7 +268,7 @@ async function unlock(){
     TOKEN = d.token; sessionStorage.setItem('yamuna_billing_token', TOKEN);
     closePinModal(); afterLogin();
   }catch(e){ document.getElementById('pinError').textContent = e.message; }
-  document.getElementById('pinBtn').textContent = 'Login →';
+  finally{ clearBusy(b); }
 }
 document.getElementById('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter') unlock(); });
 if(TOKEN){ afterLogin(); }
@@ -355,24 +375,28 @@ function renderOrdersList(){
       <div class="total-row"><span>Total</span><span>₹${o.total}</span></div>
       <div class="actions">
         <button type="button" class="btn small wa" onclick="showBillById('${o.id}')">📄 Bill</button>
-        <button type="button" class="btn small danger" onclick="deleteOrder('${o.id}')">🗑️ Delete</button>
+        <button type="button" class="btn small danger" onclick="deleteOrder('${o.id}', this)">🗑️ Delete</button>
       </div>
     </div>`).join('');
 }
-async function deleteOrder(id){
+async function deleteOrder(id, btn){
   const o = ALL_ORDERS.find(x=>String(x.id)===String(id));
   if(!o) return;
   if(!confirm(`Delete Order #${id} (₹${o.total})? This cannot be undone.`)) return;
-  const isLocal = String(id).startsWith('L');
+  const b = setBusy(btn, 'Deleting…');
+  if(!b) return;
   try{
-    if(!isLocal) await api('/api/orders?id='+encodeURIComponent(id), {method:'DELETE'});
-  }catch(e){ /* API delete failed — fall through to local removal below */ }
-  setLocalOrders(localOrders().filter(x=>String(x.id)!==String(id)));
-  ALL_ORDERS = ALL_ORDERS.filter(x=>String(x.id)!==String(id));
-  if(LAST_ORDER && String(LAST_ORDER.id)===String(id)){ LAST_ORDER = null; document.getElementById('savedOrderBox').classList.add('hidden'); }
-  renderOrdersList(); loadAll();
+    const isLocal = String(id).startsWith('L');
+    try{
+      if(!isLocal) await api('/api/orders?id='+encodeURIComponent(id), {method:'DELETE'});
+    }catch(e){ /* API delete failed — fall through to local removal below */ }
+    setLocalOrders(localOrders().filter(x=>String(x.id)!==String(id)));
+    ALL_ORDERS = ALL_ORDERS.filter(x=>String(x.id)!==String(id));
+    if(LAST_ORDER && String(LAST_ORDER.id)===String(id)){ LAST_ORDER = null; document.getElementById('savedOrderBox').classList.add('hidden'); }
+    renderOrdersList(); loadAll();
+  }finally{ clearBusy(b); }
 }
-function voidLastOrder(){ if(LAST_ORDER) deleteOrder(LAST_ORDER.id); }
+function voidLastOrder(btn){ if(LAST_ORDER) deleteOrder(LAST_ORDER.id, btn); }
 
 /* ---------- costs list + delete ---------- */
 function renderCostsList(){
@@ -380,19 +404,23 @@ function renderCostsList(){
   if(!ALL_COSTS.length){ el.innerHTML = '<p>No costs yet.</p>'; return; }
   el.innerHTML = ALL_COSTS.slice(0,20).map(c=>`
     <div class="cost-row"><span><b>₹${c.amount}</b> • ${c.category||'Materials'}<br><small style="color:#686b78">${(c.cost_date||'').slice(0,10)}${c.note ? ' • ' + c.note : ''}</small></span>
-    <button type="button" class="btn small danger" onclick="deleteCost('${c.id}')">🗑️ Delete</button></div>`).join('');
+    <button type="button" class="btn small danger" onclick="deleteCost('${c.id}', this)">🗑️ Delete</button></div>`).join('');
 }
-async function deleteCost(id){
+async function deleteCost(id, btn){
   const c = ALL_COSTS.find(x=>String(x.id)===String(id));
   if(!c) return;
   if(!confirm(`Delete this cost entry (₹${c.amount} • ${c.category||'Materials'})?`)) return;
-  const isLocal = String(id).startsWith('LC');
+  const b = setBusy(btn, 'Deleting…');
+  if(!b) return;
   try{
-    if(!isLocal) await api('/api/costs?id='+encodeURIComponent(id), {method:'DELETE'});
-  }catch(e){ /* fall through to local removal */ }
-  setLocalCosts(localCosts().filter(x=>String(x.id)!==String(id)));
-  ALL_COSTS = ALL_COSTS.filter(x=>String(x.id)!==String(id));
-  renderCostsList(); loadAll();
+    const isLocal = String(id).startsWith('LC');
+    try{
+      if(!isLocal) await api('/api/costs?id='+encodeURIComponent(id), {method:'DELETE'});
+    }catch(e){ /* fall through to local removal */ }
+    setLocalCosts(localCosts().filter(x=>String(x.id)!==String(id)));
+    ALL_COSTS = ALL_COSTS.filter(x=>String(x.id)!==String(id));
+    renderCostsList(); loadAll();
+  }finally{ clearBusy(b); }
 }
 
 /* ---------- new order ---------- */
@@ -401,7 +429,10 @@ function renderOrderForm(){
     <div class="item-row ${CART[it.id]>0?'selected':''}"><span><span style="font-size:1.6rem">${it.emoji||'🍽️'}</span> <b>${it.name}</b><br><span style="color:#8a2f14;font-weight:800">₹${it.price} / ${it.unit||'plate'}</span>${CART[it.id]>0?` <span style="color:#0e8a3e;font-weight:800">• ${CART[it.id]} × ₹${it.price} = ₹${CART[it.id]*it.price}</span>`:''}</span><span style="white-space:nowrap"><button type="button" class="qty-btn" onclick="chQty(${it.id},-1)">−</button> <b id="cq-${it.id}" style="font-size:1.3rem;min-width:28px;display:inline-block;text-align:center">${CART[it.id]||0}</b> <button type="button" class="qty-btn" onclick="chQty(${it.id},1)">+</button></span></div>`).join('') : '<p class="error">No menu items loaded. Reload the page.</p>';
 }
 window.chQty = function(id,d){ CART[id]=(CART[id]||0)+d; if(CART[id]<0)CART[id]=0; document.getElementById('cq-'+id).textContent=CART[id]; const t=MENU.reduce((s,it)=>s+it.price*(CART[it.id]||0),0); document.getElementById('oTotal').textContent=t; };
-async function saveOrder(){
+async function saveOrder(btn){
+  const b = setBusy(btn || document.getElementById('saveOrderBtn'), 'Saving order…');
+  if(!b) return;
+  try{
   const items = MENU.filter(it=>CART[it.id]>0).map(it=>({menu_item_id:it.id, name:it.name, price:it.price, qty:CART[it.id]}));
   if(!items.length){ document.getElementById('orderMsg').textContent='Add at least one item.'; return; }
   const total = items.reduce((s,i)=>s+i.price*i.qty,0);
@@ -422,6 +453,7 @@ async function saveOrder(){
   CART={}; renderOrderForm(); document.getElementById('oTotal').textContent='0';
   document.getElementById('oName').value=''; document.getElementById('oPhone').value=''; document.getElementById('oWa').value='';
   loadAll();
+  }finally{ clearBusy(b); }
 }
 
 /* ---------- professional bill image ---------- */
@@ -480,13 +512,17 @@ function closeBill(){ document.getElementById('billModal').classList.add('hidden
 function billFile(o){
   return new Promise(res=>{ drawBillCanvas(o).toBlob(b=>res(new File([b], 'yamuna-snacks-bill-'+o.id+'.png', {type:'image/png'})), 'image/png'); });
 }
-async function shareBill(){
+async function shareBill(btn){
   if(!LAST_ORDER) return;
+  const b = setBusy(btn || document.getElementById('shareBillBtn'), 'Sharing…');
+  if(!b) return;
+  try{
   const file = await billFile(LAST_ORDER);
   if(navigator.canShare && navigator.canShare({files:[file]}) && navigator.share){
     try{ await navigator.share({files:[file], title:'Yamuna Snacks Bill #'+LAST_ORDER.id, text: billText(LAST_ORDER)}); return; }catch(e){ if(e && e.name==='AbortError') return; }
   }
   downloadBill();
+  }finally{ clearBusy(b); }
 }
 function downloadBill(){
   if(!LAST_ORDER) return;
@@ -503,22 +539,30 @@ function sendBillWa(){
 }
 
 /* ---------- costs ---------- */
-async function saveCost(){
+async function saveCost(btn){
+  const b = setBusy(btn, 'Saving…');
+  if(!b) return;
+  try{
   const body = {cost_date: document.getElementById('cDate').value || undefined, category: document.getElementById('cCat').value, amount: Number(document.getElementById('cAmt').value||0), note: document.getElementById('cNote').value||null};
   try{ await api('/api/costs', {method:'POST', body: JSON.stringify(body)}); document.getElementById('costMsg').textContent='Cost saved.'; loadAll(); }
   catch(e){ const lc = localCosts(); lc.unshift({id:'LC'+Date.now(), ...body, cost_date: body.cost_date || new Date().toISOString().slice(0,10)}); setLocalCosts(lc); document.getElementById('costMsg').textContent='Cost saved on this device (database not connected yet).'; loadAll(); }
   document.getElementById('cAmt').value=''; document.getElementById('cNote').value='';
+  }finally{ clearBusy(b); }
 }
 
 /* ---------- prices ---------- */
 function renderPrices(){
   document.getElementById('priceList').innerHTML = MENU.map(it=>`
-    <div class="item-row"><span>${it.name}</span><span>₹ <input id="p-${it.id}" type="number" value="${it.price}" min="0"> <button type="button" class="btn small" onclick="savePrice(${it.id})">Save</button></span></div>`).join('');
+    <div class="item-row"><span>${it.name}</span><span>₹ <input id="p-${it.id}" type="number" value="${it.price}" min="0"> <button type="button" class="btn small" onclick="savePrice(${it.id}, this)">Save</button></span></div>`).join('');
 }
-window.savePrice = async function(id){
+window.savePrice = async function(id, btn){
+  const b = setBusy(btn, 'Saving…');
+  if(!b) return;
+  try{
   const price = Number(document.getElementById('p-'+id).value||0);
   try{ await api('/api/menu', {method:'PUT', body: JSON.stringify({id, price})}); loadAll(); }
   catch(e){ const p = localPrices(); p[id]=price; localStorage.setItem('yamuna_prices', JSON.stringify(p)); MENU = menuWithLocalPrices(MENU); renderOrderForm(); renderPrices(); }
+  }finally{ clearBusy(b); }
 };
 document.getElementById('cDate').value = new Date().toISOString().slice(0,10);
 </script>
