@@ -37,6 +37,15 @@ export default async function handler(req, res) {
       }
       return json(res, 200, { orders });
     }
+    if (req.method === 'DELETE') {
+      // DELETE ?id=<order id> -> remove a wrongly added bill and its items.
+      const id = new URL(req.url || '/', 'http://x').searchParams.get('id');
+      if (!id) return json(res, 400, { error: 'Order id required' });
+      await db`DELETE FROM order_items WHERE order_id = ${Number(id)}`;
+      const rows = await db`DELETE FROM orders WHERE id = ${Number(id)} RETURNING id`;
+      if (!rows.length) return json(res, 404, { error: 'Order not found' });
+      return json(res, 200, { ok: true, deleted: rows[0].id });
+    }
     return json(res, 405, { error: 'Method not allowed' });
   } catch (e) {
     return json(res, 500, { error: String(e.message || e) });

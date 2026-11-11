@@ -20,6 +20,14 @@ export default async function handler(req, res) {
       const rows = await db`SELECT id, cost_date, category, amount, note FROM material_costs ORDER BY cost_date DESC, id DESC LIMIT 100`;
       return json(res, 200, { costs: rows });
     }
+    if (req.method === 'DELETE') {
+      // DELETE ?id=<cost id> -> remove a wrongly added material cost.
+      const id = new URL(req.url || '/', 'http://x').searchParams.get('id');
+      if (!id) return json(res, 400, { error: 'Cost id required' });
+      const rows = await db`DELETE FROM material_costs WHERE id = ${Number(id)} RETURNING id`;
+      if (!rows.length) return json(res, 404, { error: 'Cost not found' });
+      return json(res, 200, { ok: true, deleted: rows[0].id });
+    }
     return json(res, 405, { error: 'Method not allowed' });
   } catch (e) {
     return json(res, 500, { error: String(e.message || e) });
